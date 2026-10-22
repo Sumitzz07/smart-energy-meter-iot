@@ -1,0 +1,85 @@
+# ==============================================================================
+# SMART ENERGY METER — MASTER .GITIGNORE
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. SENSITIVE CREDENTIALS & SECRETS (NEVER COMMIT!)
+# ------------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.env
+**/.env
+**/.env.local
+**/.env.*.local
+!**/.env.example
+!**/.env.local.example
+
+# Hardware Wi-Fi and Supabase Keys
+secrets.h
+**/secrets.h
+!secrets.example.h
+!**/secrets.example.h
+**/config.h
+!**/config.h.example
+
+# ------------------------------------------------------------------------------
+# 2. DEPENDENCIES & PACKAGE MANAGERS
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Arduino Third-Party Libraries & Backups (Install via Arduino Library Manager)
+Arduino_Projects/libraries/
+Arduino_Projects/backups/
+Arduino_Projects/Arduino_Code/
+
+# ------------------------------------------------------------------------------
+# 3. BUILD OUTPUTS & CACHES
+# ------------------------------------------------------------------------------
+# Next.js
+.next/
+**/.next/
+out/
+**/out/
+build/
+**/build/
+dist/
+**/dist/
+
+# TypeScript
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# PlatformIO & Embedded Builds
+.pio/
+.pioenvs/
+.piolibdeps/
+*.hex
+*.bin
+*.elf
+*.o
+
+# ------------------------------------------------------------------------------
+# 4. LOGS & DIAGNOSTICS
+# ------------------------------------------------------------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# 5. OS & IDE ARTIFACTS
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.vercel

@@ -1,0 +1,61 @@
+// ============================================================================
+// config.h.example — Template Pin Assignments, Network Settings & IoT Constants
+// Copy this file to config.h and customize for your local setup.
+// ============================================================================
+#ifndef CONFIG_H
+#define CONFIG_H
+
+#include <Arduino.h>
+
+// ----------------------------------------------------------------------------
+// 1. WI-FI CREDENTIALS
+// ----------------------------------------------------------------------------
+#define WIFI_SSID_DEFAULT       "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD_DEFAULT   "YOUR_WIFI_PASSWORD"
+
+// ----------------------------------------------------------------------------
+// 2. SUPABASE REST ENDPOINT & CLIENT API KEY (ANON / PUBLISHABLE KEY)
+// ----------------------------------------------------------------------------
+#define SUPABASE_URL_DEFAULT    "https://your-project.supabase.co"
+#define SUPABASE_ANON_KEY       "your-supabase-publishable-key"
+
+// ----------------------------------------------------------------------------
+// 3. DEVICE IDENTIFIER (Multi-Device Support)
+// ----------------------------------------------------------------------------
+#define DEVICE_ID_DEFAULT       "esp32-meter-001"
+
+// ----------------------------------------------------------------------------
+// 4. HARDWARE PIN MAPPING (ESP32 DevKit 30-Pin / 38-Pin)
+// ----------------------------------------------------------------------------
+// PZEM-004T V3 (Hardware Serial 2 / UART2)
+#define PIN_PZEM_RX             26  // ESP32 GPIO26 (RX) ◄── Connects to PZEM TX
+#define PIN_PZEM_TX             27  // ESP32 GPIO27 (TX) ──► Connects to PZEM RX
+
+// Relay 1 (Main Load Protection Contactor — Active-LOW Optocoupler Trigger)
+#define PIN_RELAY_1             23  // ESP32 GPIO23 ──► Connects to Relay IN
+#define RELAY_ON_LEVEL          LOW  // 0V / LOW triggers optocoupler (Relay CLOSED / ON)
+#define RELAY_OFF_LEVEL         HIGH // 3.3V / HIGH turns optocoupler OFF (Relay OPEN / OFF)
+
+// 16x2 LCD with I2C Backpack (PCF8574)
+#define PIN_LCD_SDA             13  // ESP32 GPIO13 ◄──► LCD I2C SDA
+#define PIN_LCD_SCL             14  // ESP32 GPIO14 ───► LCD I2C SCL
+#define LCD_I2C_ADDR_PRIMARY    0x27 // Default I2C address
+#define LCD_I2C_ADDR_SECONDARY  0x3F // Alternative I2C address
+
+// Audible Alarm (Buzzer)
+#define PIN_BUZZER              25  // ESP32 GPIO25 ──► Buzzer (+) Positive Pin
+
+// Status Indicator LED
+#define PIN_STATUS_LED          2   // Onboard Blue LED (GPIO2)
+
+// ----------------------------------------------------------------------------
+// 5. TIMERS & CYCLE INTERVALS (Non-Blocking)
+// ----------------------------------------------------------------------------
+#define INTERVAL_SENSOR_READ_MS   800    // Read PZEM registers every 800ms
+#define INTERVAL_LCD_UPDATE_MS    500    // Refresh LCD every 500ms
+#define INTERVAL_LCD_PAGE_MS      3000   // Cycle LCD telemetry page every 3 seconds
+#define INTERVAL_TELEMETRY_MS     5000   // Upload reading to Supabase every 5 seconds
+#define INTERVAL_SETTINGS_SYNC_MS 30000  // Sync meter_settings every 30 seconds
+#define RECOVERY_HOLD_TIME_MS     5000   // 5s continuous safe window before reclosing Relay
+
+#endif // CONFIG_H

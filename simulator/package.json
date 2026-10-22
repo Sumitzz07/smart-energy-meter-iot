@@ -1,0 +1,25 @@
+{
+  "name": "smart-energy-meter-simulator",
+  "version": "1.0.0",
+  "description": "Standalone simulator for the Smart Energy Meter IoT project. Generates realistic PZEM-004T readings and pushes them to Supabase.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "sim": "tsx src/index.ts",
+    "sim:normal": "tsx src/index.ts --mode normal",
+    "sim:overvoltage": "tsx src/index.ts --mode over_voltage",
+    "sim:undervoltage": "tsx src/index.ts --mode under_voltage",
+    "sim:overpower": "tsx src/index.ts --mode over_power",
+    "sim:fault": "tsx src/index.ts --mode comm_failure"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "@types/node": "^20.14.0"
+  }
+}
