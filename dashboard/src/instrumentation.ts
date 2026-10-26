@@ -6,7 +6,9 @@
 // ============================================================
 
 export async function register() {
-  if (process.env.NEXT_RUNTIME === 'nodejs') {
+  // Do not spawn background interval timers in Vercel's ephemeral serverless lambdas.
+  // In local development or standalone Node servers, initialize the background worker.
+  if (process.env.NEXT_RUNTIME === 'nodejs' && !process.env.VERCEL) {
     const { startBackgroundWorker } = await import('@/lib/background-worker');
     startBackgroundWorker();
   }

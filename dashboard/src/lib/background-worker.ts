@@ -93,7 +93,6 @@ export async function sweepPendingAlerts(now: number = Date.now()): Promise<numb
       .from('alerts')
       .select('*')
       .eq('email_status', 'pending')
-      .is('notification_sent_at', null)
       .order('timestamp', { ascending: true })
       .limit(10);
 
@@ -106,8 +105,15 @@ export async function sweepPendingAlerts(now: number = Date.now()): Promise<numb
       return 0;
     }
 
-    // Filter out any alert attempted within the last 15 minutes
+    // Filter out alerts with an active, unexpired claim lease (e.g. webhook currently dispatching)
     const unattemptedAlerts = pendingAlerts.filter((a) => {
+      if (a.delivery_error?.startsWith('CLAIM_LEASE:')) {
+        const parts = a.delivery_error.split(':');
+        const leaseExpiresAt = parseInt(parts[1], 10);
+        if (!isNaN(leaseExpiresAt) && now < leaseExpiresAt) {
+          return false; // Active claim lease being processed by webhook, skip
+        }
+      }
       const lastAttempt = recentlyProcessedAlerts.get(a.id);
       return !lastAttempt || now - lastAttempt > 15 * 60 * 1000;
     });

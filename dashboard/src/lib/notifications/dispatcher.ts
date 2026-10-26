@@ -83,12 +83,14 @@ async function executeDispatch(
   }
 
   // Also query the current database state for this alertId if not fresh
+  let dbAlert: { id: string; email_status: string; delivery_error: string | null } | null = null;
   try {
-    const { data: dbAlert } = await supabaseServer
+    const { data } = await supabaseServer
       .from('alerts')
       .select('id, email_status, delivery_error')
       .eq('id', alertId)
       .maybeSingle();
+    dbAlert = data;
 
     if (dbAlert && (dbAlert.email_status === 'sent' || dbAlert.email_status === 'skipped' || (!options.force && dbAlert.email_status === 'failed'))) {
       return {
@@ -102,39 +104,74 @@ async function executeDispatch(
     console.warn('[Dispatcher] Pre-dispatch database check warning:', checkErr);
   }
 
-  // 1b. Persistent Atomic Claim for Serverless & Multi-Instance Concurrency:
-  // Multiple serverless lambdas or simultaneous Webhook + Sweeper instances
-  // can attempt to process the exact same pending alert.
-  // We atomically set notification_sent_at and a claiming lock in Postgres.
-  // If another instance already claimed it, the update matches 0 rows.
+  // 1b. Persistent Atomic Claim with Stale Lease Recovery:
+  // Prevents concurrent duplicate dispatches across serverless instances and worker sweeps.
+  // Uses a 2-minute dedicated claim lease in delivery_error without touching notification_sent_at.
+  // If an instance crashes mid-flight, the lease expires after 2 minutes, allowing safe recovery and retry.
   if (!options.force) {
-    try {
-      const claimTimestamp = new Date().toISOString();
-      const { data: claimedRow, error: claimErr } = await supabaseServer
-        .from('alerts')
-        .update({
-          notification_sent_at: claimTimestamp,
-          delivery_error: 'Claimed for processing by notification dispatcher',
-        })
-        .eq('id', alertId)
-        .eq('email_status', 'pending')
-        .is('notification_sent_at', null)
-        .select('id')
-        .maybeSingle();
+    const CLAIM_LEASE_DURATION_MS = 2 * 60 * 1000; // 2 minutes
+    const now = Date.now();
+    const existingError = dbAlert?.delivery_error || '';
 
-      if (claimErr) {
-        console.warn('[Dispatcher] Atomic claim check warning:', claimErr.message);
-      } else if (!claimedRow) {
-        // Another instance or webhook already claimed this alert record
+    // Check if another instance has an active, unexpired claim lease
+    if (existingError.startsWith('CLAIM_LEASE:')) {
+      const parts = existingError.split(':');
+      const leaseExpiresAt = parseInt(parts[1], 10);
+      if (!isNaN(leaseExpiresAt) && now < leaseExpiresAt) {
+        const remainingSec = Math.ceil((leaseExpiresAt - now) / 1000);
         return {
           alertId,
           cooldownSkipped: true,
-          email: { status: 'skipped', error: 'Alert was already claimed or processed by another instance.' },
-          errorSummary: 'Alert was already claimed or processed by another instance.',
+          email: {
+            status: 'skipped',
+            error: `Alert is actively being processed by another worker (lease expires in ${remainingSec}s).`,
+          },
+          errorSummary: `Alert is actively being processed by another worker (lease expires in ${remainingSec}s).`,
         };
       }
+      // If now >= leaseExpiresAt, previous worker instance crashed or abandoned. Proceed to reclaim below!
+    }
+
+    const newLeaseToken = `CLAIM_LEASE:${now + CLAIM_LEASE_DURATION_MS}:${Math.random().toString(36).slice(2, 8)}`;
+    let claimClaimed = false;
+
+    try {
+      if (existingError.startsWith('CLAIM_LEASE:')) {
+        // Stale lease recovery: atomically replace old expired lease token with new lease token
+        const { data: reclaimedRow } = await supabaseServer
+          .from('alerts')
+          .update({ delivery_error: newLeaseToken })
+          .eq('id', alertId)
+          .eq('email_status', 'pending')
+          .eq('delivery_error', existingError)
+          .select('id')
+          .maybeSingle();
+
+        claimClaimed = Boolean(reclaimedRow);
+      } else {
+        // Fresh claim: atomically update from null/empty delivery_error
+        const { data: freshClaimRow } = await supabaseServer
+          .from('alerts')
+          .update({ delivery_error: newLeaseToken })
+          .eq('id', alertId)
+          .eq('email_status', 'pending')
+          .or('delivery_error.is.null,delivery_error.eq.""')
+          .select('id')
+          .maybeSingle();
+
+        claimClaimed = Boolean(freshClaimRow);
+      }
     } catch (claimEx) {
-      console.warn('[Dispatcher] Atomic claim exception (proceeding safely):', claimEx);
+      console.warn('[Dispatcher] Atomic claim exception:', claimEx);
+    }
+
+    if (!claimClaimed) {
+      return {
+        alertId,
+        cooldownSkipped: true,
+        email: { status: 'skipped', error: 'Alert claim race lost: processed by another instance.' },
+        errorSummary: 'Alert claim race lost: processed by another instance.',
+      };
     }
   }
 
@@ -258,7 +295,7 @@ async function executeDispatch(
       .update({
         email_status: emailStatus,
         delivery_error: deliveryError,
-        notification_sent_at: new Date().toISOString(),
+        notification_sent_at: emailResult.success ? new Date().toISOString() : null,
       })
       .eq('id', alertId);
 

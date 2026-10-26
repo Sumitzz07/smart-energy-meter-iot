@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { dispatchAlertNotification } from '@/lib/notifications/dispatcher';
 import { STALE_THRESHOLD_SECONDS } from '@/lib/constants';
+import { isSecretAuthorized } from '@/lib/auth-utils';
 
 export async function GET(req: NextRequest) {
   return handleCheckOffline(req);
@@ -24,24 +25,33 @@ export async function POST(req: NextRequest) {
 
 async function handleCheckOffline(req: NextRequest) {
   try {
-    // 0. Authorization check for production / scheduled environments
+    // 0. Strict Authorization Check: Validate secret BEFORE any database access
     const configuredSecret = process.env.ALERT_WEBHOOK_SECRET || process.env.CRON_SECRET;
     const isProduction = process.env.NODE_ENV === 'production';
 
-    if (isProduction && configuredSecret && !configuredSecret.startsWith('your-')) {
+    // In production, reject execution if secrets are missing or placeholders
+    if (isProduction && (!configuredSecret || configuredSecret.startsWith('your-'))) {
+      return NextResponse.json(
+        { error: 'Server misconfiguration: ALERT_WEBHOOK_SECRET or CRON_SECRET must be configured in production.' },
+        { status: 500 }
+      );
+    }
+
+    // Authenticate request using constant-time comparison
+    if (configuredSecret && !configuredSecret.startsWith('your-')) {
       const authHeader = req.headers.get('authorization') || '';
       const secretHeader = req.headers.get('x-webhook-secret') || req.headers.get('x-cron-secret') || '';
       const querySecret = req.nextUrl.searchParams.get('secret') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
 
-      const isAuthorized =
-        secretHeader === configuredSecret ||
-        token === configuredSecret ||
-        querySecret === configuredSecret;
+      const isAuthorized = isSecretAuthorized(
+        [secretHeader, bearerToken, querySecret],
+        configuredSecret
+      );
 
       if (!isAuthorized) {
         return NextResponse.json(
-          { error: 'Unauthorized: Invalid cron / webhook authentication token' },
+          { error: 'Unauthorized: Invalid or missing cron / webhook authentication token' },
           { status: 401 }
         );
       }

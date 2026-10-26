@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { dispatchAlertNotification } from '@/lib/notifications/dispatcher';
 import { getSmtpBackoffStatus } from '@/lib/notifications/gmail-smtp';
+import { isSecretAuthorized } from '@/lib/auth-utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,16 +43,23 @@ async function handlePoll(req: NextRequest) {
     const configuredSecret = process.env.ALERT_WEBHOOK_SECRET || process.env.CRON_SECRET;
     const isProduction = process.env.NODE_ENV === 'production';
 
-    if (isProduction && configuredSecret && !configuredSecret.startsWith('your-')) {
+    if (isProduction && (!configuredSecret || configuredSecret.startsWith('your-'))) {
+      return NextResponse.json(
+        { error: 'Server misconfiguration: ALERT_WEBHOOK_SECRET or CRON_SECRET must be configured in production.' },
+        { status: 500 }
+      );
+    }
+
+    if (configuredSecret && !configuredSecret.startsWith('your-')) {
       const authHeader = req.headers.get('authorization') || '';
       const secretHeader = req.headers.get('x-webhook-secret') || req.headers.get('x-cron-secret') || '';
       const querySecret = req.nextUrl.searchParams.get('secret') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
 
-      const isAuthorized =
-        secretHeader === configuredSecret ||
-        token === configuredSecret ||
-        querySecret === configuredSecret;
+      const isAuthorized = isSecretAuthorized(
+        [secretHeader, bearerToken, querySecret],
+        configuredSecret
+      );
 
       if (!isAuthorized) {
         return NextResponse.json(

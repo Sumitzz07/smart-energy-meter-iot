@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { dispatchAlertNotification } from '@/lib/notifications/dispatcher';
 import { getSmtpBackoffStatus } from '@/lib/notifications/gmail-smtp';
+import { isSecretAuthorized } from '@/lib/auth-utils';
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,12 +33,12 @@ export async function POST(req: NextRequest) {
       const authHeader = req.headers.get('authorization') || '';
       const secretHeader = req.headers.get('x-webhook-secret') || '';
       const querySecret = req.nextUrl.searchParams.get('secret') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
 
-      const isAuthorized =
-        secretHeader === configuredSecret ||
-        token === configuredSecret ||
-        querySecret === configuredSecret;
+      const isAuthorized = isSecretAuthorized(
+        [secretHeader, bearerToken, querySecret],
+        configuredSecret
+      );
 
       if (!isAuthorized) {
         return NextResponse.json(
