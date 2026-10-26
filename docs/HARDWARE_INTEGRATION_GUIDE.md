@@ -35,7 +35,7 @@ This document provides complete instructions for wiring, flashing, commissioning
 │  • GPIO16 (RX2) ◄─── PZEM TX                        • GPIO21 (SDA) ◄──► 16x2 LCD I2C (SDA) │
 │  • GPIO17 (TX2) ────► PZEM RX                        • GPIO22 (SCL) ────► 16x2 LCD I2C (SCL)│
 │                                                                                            │
-│  • GPIO26       ────► Relay 1 IN (Main Load Contactor)                                     │
+│  • GPIO23       ────► Relay 1 IN (Main Load Contactor)                                     │
 │  • GPIO25       ────► Buzzer (+) (Audible Fault Alarm)                                     │
 │  • GPIO2        ────► Status LED                                                           │
 │                                                                                            │
@@ -71,7 +71,7 @@ This document provides complete instructions for wiring, flashing, commissioning
 | **10**| **16×2 LCD I2C** | `SCL` | **`GPIO22`** | ⚪ White | I2C Serial Clock line |
 | **11**| **Relay Module** | `VCC` | **`VIN / 5V`** | 🔴 Red | 5V Relay coil power |
 | **12**| **Relay Module** | `GND` | **`GND`** | ⚫ Black | Relay Ground |
-| **13**| **Relay Module** | **`IN1` (Relay 1)** | **`GPIO26`** | 🟠 Orange | **Main Load Contactor Control** (Active-LOW) |
+| **13**| **Relay Module** | **`IN1` (Relay 1)** | **`GPIO23`** | 🟠 Orange | **Main Load Contactor Control** (Active-LOW) |
 | **14**| **Buzzer** | `+ (Positive)` | **`GPIO25`** | 🔔 Red/Yellow | Audible Alarm (`HIGH` = Beep on fault) |
 | **15**| **Buzzer** | `- (Negative)` | **`GND`** | ⚫ Black | Buzzer Ground |
 
@@ -94,6 +94,101 @@ This document provides complete instructions for wiring, flashing, commissioning
 > [!WARNING]
 > **CT CLAMP SINGLE-CONDUCTOR RULE**:
 > Pass **ONLY the single Live wire** going from Relay 1 `NO` to the load through the CT coil. Never pass both Live and Neutral through the CT coil together.
+
+---
+
+## 2.1 Relay Contact Terminal Architecture & Fail-Safe Protection (COM vs NO vs NC)
+
+### A. The 3 Relay Terminals
+The AC side of the electromechanical relay module (e.g., Songle SRD-05VDC-SL-C) features 3 heavy-duty screw terminals:
+1. **`COM` (Common)**: The central moving armature contact. Connect incoming AC Live (from fuse/MCB) here.
+2. **`NO` (Normally Open)**: Disconnected from `COM` when the relay coil is unpowered (air gap). Connected to `COM` ONLY when the coil is energized by the ESP32. **This is the ONLY correct terminal for load protection!**
+3. **`NC` (Normally Closed)**: Electrically shorted to `COM` by an internal mechanical spring whenever the coil is unpowered (de-energized). Opens only when the coil is energized.
+
+```
+          [ DE-ENERGIZED (Fault State / Coil OFF) ]
+                ┌─────────── NC  <--- Connected by internal spring!
+                │
+  COM ──────────┘ (moving contact)
+                
+                . . . . . . NO   <--- Air gap (Open circuit)
+
+
+          [ ENERGIZED (Normal Safe State / Coil ON) ]
+                . . . . . . NC   <--- Air gap (Open circuit)
+                
+  COM ──────────┐ (moving contact)
+                │
+                └─────────── NO  <--- Pulled by electromagnet! Connected!
+```
+
+### B. Logic Table for Active-LOW Relay Module
+| System State | ESP32 GPIO23 Level | Optocoupler | Relay Coil | Onboard Relay LED | COM $\leftrightarrow$ NO Contact | COM $\leftrightarrow$ NC Contact | Connected Load (if wired to NO) |
+|---|:---|:---|:---|:---|:---|:---|:---|
+| **Booting / Power-Up** | `HIGH` (3.3V) | OFF | De-energized | **OFF** | **OPEN** | CLOSED | **ISOLATED (Safe)** |
+| **Normal Mains Safe** | `LOW` (0V) | ON | **ENERGIZED** | **ON (Lit)** | **CLOSED (Conducting)** | OPEN | **ENERGIZED (Active)** |
+| **Fault Trip (OV / UV / OP)** | `HIGH` (3.3V) | OFF | **DE-ENERGIZED** | **OFF (Dark)** | **OPEN (Air gap)** | **CLOSED** | **ISOLATED (Protected)** |
+| **ESP32 Power Loss / Offline** | Floating/0V unpowered | OFF | **DE-ENERGIZED** | **OFF (Dark)** | **OPEN (Air gap)** | **CLOSED** | **ISOLATED (Fail-Safe)** |
+
+### C. Root Cause: Why the Bulb Continues Glowing When the LED Turns OFF
+When a fault (such as `OVER_VOLTAGE`) occurs:
+1. The ESP32 correctly identifies the threshold breach and transitions to `STATE_TRIP`.
+2. The ESP32 drives GPIO 23 `HIGH` (`RELAY_OFF`).
+3. The optocoupler turns off, coil de-energizes, and the onboard relay LED turns **OFF**.
+4. **If the bulb is wired across `COM` and `NC`**:
+   - De-energizing the coil releases the armature spring, snapping COM directly onto **`NC`**!
+   - Mains Live flows continuously through the `NC` contact to the bulb, keeping it powered!
+5. **Alternative Failure Mode — Contact Welding / Fusing**:
+   - If wired to `NO`, high inrush current or contact arcing from an inductive/capacitive load may have physically fused the silver alloy contact tips together. Even though the coil de-energizes, the contacts remain welded shut.
+6. **Relay Bypass**:
+   - The load live wire is connected directly to the incoming live distribution block, bypassing the relay terminals entirely.
+
+> [!CAUTION]
+> Software alone cannot physically break an electrical connection if the physical wire is screwed into the `NC` terminal or if the contacts are welded together. The physical wire must be corrected.
+
+---
+
+## 2.2 Safe Low-Voltage Multimeter Continuity Test Procedure (ZERO AC Mains Power!)
+
+Perform this test to verify the relay contacts and wiring without ever exposing yourself to live 230V AC mains.
+
+### Test Equipment & Preparation:
+- Digital Multimeter set to **Continuity mode (Beep / Diode symbol)** or **Resistance ($\Omega$) mode**.
+- ESP32 connected via USB cable to your laptop/PC (5V low voltage only).
+- **CRITICAL SAFETY STEP**: **UNPLUG THE 230V AC MAINS PLUG FROM THE WALL SOCKET COMPLETELY.** Verify with a non-contact voltage tester that zero AC voltage is present.
+
+### Step-by-Step Continuity Test:
+1. **Unpowered Relay Module Test (Zero power to ESP32 and Relay)**:
+   - Place multimeter Black probe on `COM` screw terminal.
+   - Touch Red probe to `NO` screw terminal: Multimeter must read **`O.L` (Open Loop / Infinite resistance, NO beep)**.
+   - Touch Red probe to `NC` screw terminal: Multimeter must **BEEP and read $< 0.5\,\Omega$**.
+   - *If `COM` and `NO` beep while completely unpowered, the contacts are mechanically welded and the relay module must be replaced.*
+2. **Powered Safe State Test (ESP32 running in Normal State)**:
+   - Connect ESP32 to USB. Open Arduino Serial Monitor (`115200` baud).
+   - Type command `ON` or let auto protection run under valid safe telemetry.
+   - The relay LED on the module turns **ON** and an audible "click" is heard.
+   - Measure `COM` to `NO`: Multimeter must **BEEP and read $< 0.5\,\Omega$** (Closed circuit).
+   - Measure `COM` to `NC`: Multimeter must read **`O.L` (Open circuit, NO beep)**.
+3. **Trip State Test (ESP32 commanded OFF)**:
+   - In Serial Monitor, type `OFF`.
+   - The relay LED turns **OFF** and an audible "click" is heard.
+   - Measure `COM` to `NO`: Multimeter must immediately read **`O.L` (Open circuit, NO beep)**!
+   - *This confirms that a load wired across COM and NO will be 100% physically isolated when the relay trips.*
+
+---
+
+## 2.3 Physical Correction & Rewiring Checklist
+
+1. **Disconnect all power**: Pull the AC mains power plug from the socket.
+2. **Inspect the Relay 1 screw terminal block**:
+   - Verify which terminal the load wire is connected to.
+   - **Correct connection**:
+     - One wire from Mains Live $\rightarrow$ **`COM`**.
+     - One wire from **`NO`** $\rightarrow$ Passes through PZEM CT coil $\rightarrow$ Connects to Load Live (`L`).
+     - Terminal **`NC`** must be left **COMPLETELY EMPTY / UNCONNECTED**.
+3. **Check Current Transformer (CT)**:
+   - Ensure the single Live wire passing from `NO` to the load passes through the center of the CT ring.
+   - When the relay trips (`OFF`), the CT measures `0.000 A`, which validates physical disconnection on the dashboard.
 
 ---
 

@@ -214,35 +214,64 @@ export default function DeviceOverviewGrid() {
                 <ConnectionBadge type={device.connection_type || 'simulation'} isStale={stale} />
               </div>
 
-              {/* Contactor Relay State Ribbon */}
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  backgroundColor: isRelay1On ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
-                  border: `1px solid ${isRelay1On ? 'var(--color-success-border)' : 'var(--color-danger-border)'}`,
-                  padding: '6px 12px',
-                  borderRadius: 'var(--radius-md)',
-                  fontSize: '0.75rem',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Power size={14} color={isRelay1On ? 'var(--color-success)' : 'var(--color-danger)'} />
-                  <span style={{ color: isRelay1On ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700 }}>
-                    Relay 1: {isRelay1On ? 'CLOSED (ON)' : 'TRIPPED (OFF)'}
-                  </span>
-                </div>
-                <span
-                  style={{
-                    fontSize: '0.6875rem',
-                    color: isRelay1On ? 'var(--color-success)' : 'var(--color-danger)',
-                    fontWeight: 600,
-                  }}
-                >
-                  {isRelay1On ? 'Active Load' : 'Protection Active'}
-                </span>
-              </div>
+              {/* Contactor Relay State Ribbon & Hardware Verification */}
+              {(() => {
+                const currentAmpsVal = reading?.current_amps ? Number(reading.current_amps) : 0;
+                const isContactorFailed = !isRelay1On && currentAmpsVal > 0.05;
+
+                return (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: isContactorFailed
+                        ? 'rgba(239, 68, 68, 0.25)'
+                        : isRelay1On
+                        ? 'var(--color-success-bg)'
+                        : 'var(--color-danger-bg)',
+                      border: `1px solid ${
+                        isContactorFailed
+                          ? 'var(--color-danger)'
+                          : isRelay1On
+                          ? 'var(--color-success-border)'
+                          : 'var(--color-danger-border)'
+                      }`,
+                      padding: '6px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.75rem',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Power
+                        size={14}
+                        color={isContactorFailed ? 'var(--color-danger)' : isRelay1On ? 'var(--color-success)' : 'var(--color-danger)'}
+                      />
+                      <span
+                        style={{
+                          color: isContactorFailed ? 'var(--color-danger)' : isRelay1On ? 'var(--color-success)' : 'var(--color-danger)',
+                          fontWeight: 700,
+                        }}
+                      >
+                        Relay 1: {isRelay1On ? 'CLOSED (ON)' : isContactorFailed ? 'TRIPPED (OFF) — CURRENT DETECTED' : 'TRIPPED (OFF)'}
+                      </span>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: '0.6875rem',
+                        color: isContactorFailed ? 'var(--color-danger)' : isRelay1On ? 'var(--color-success)' : 'var(--color-danger)',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {isContactorFailed
+                        ? `⚠️ Fail (${currentAmpsVal.toFixed(2)} A)`
+                        : isRelay1On
+                        ? 'Active Load'
+                        : 'Verified Isolated'}
+                    </span>
+                  </div>
+                );
+              })()}
 
               {/* 6 Key Telemetry Metrics Grid */}
               <div

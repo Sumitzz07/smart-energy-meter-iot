@@ -127,6 +127,7 @@ unsigned long lastSettingsSync    = 0;
 unsigned long lastPzemDiagPrint   = 0;
 unsigned long lastDnsCheck        = 0;
 unsigned long lastNtpCheck        = 0;
+unsigned long lastDiagLog         = 0;
 int lcdPage = 0;
 
 // ============================================================================
@@ -626,11 +627,25 @@ void printSystemStatus() {
   } else {
     Serial.println("Clock Status        : [UNSYNCHRONIZED] Timestamps held; no 1970 records uploaded");
   }
-  Serial.println("-------------------- Relay & Protection -------------------");
-  Serial.printf("Relay State         : %s (Circuit %s)\n", relayIsOn ? "ON" : "OFF", relayIsOn ? "LIVE" : "DISCONNECTED");
+  Serial.println("-------------------- Relay & Contactor Status -------------");
+  Serial.printf("Commanded State     : %s\n", relayIsOn ? "CLOSED (ON)" : "OPEN (OFF)");
+  Serial.printf("GPIO Pin            : GPIO%d = %s (%s)\n",
+                PIN_RELAY_1,
+                digitalRead(PIN_RELAY_1) == HIGH ? "HIGH" : "LOW",
+                digitalRead(PIN_RELAY_1) == HIGH ? "Active-LOW Coil De-energized" : "Active-LOW Coil Energized");
   Serial.printf("Manual Override     : %s\n", manualOverride ? "YES" : "NO (AUTO)");
   Serial.printf("Protection State    : %s\n", stName(protectionState));
   Serial.printf("Active Fault        : %s\n", activeFaultName.c_str());
+  if (!relayIsOn) {
+    if (pzemValid && liveCurrent > 0.05f) {
+      Serial.printf("Contact CT Feedback : [CRITICAL FAIL] %.3f A flowing while commanded OFF!\n", liveCurrent);
+      Serial.println("                      -> Check if wire is connected to NC instead of NO, or contacts are welded.");
+    } else {
+      Serial.printf("Contact CT Feedback : [VERIFIED ISOLATED] %.3f A (Zero current confirmed)\n", liveCurrent);
+    }
+  } else {
+    Serial.printf("Contact CT Feedback : [ENERGIZED] Load current: %.3f A\n", liveCurrent);
+  }
   Serial.println("-------------------- PZEM-004T Sensor --------------------");
   Serial.printf("PZEM Valid          : %s\n", pzemValid ? "YES" : "NO");
   Serial.printf("Consecutive Fails   : %d\n", pzemFailCount);
@@ -677,18 +692,22 @@ void setup() {
   delay(500);
 
   Serial.println("\n==================================================");
-  Serial.println("   SMART ENERGY METER  v2.3  (Validated NTP Clock)");
+  Serial.println("   SMART ENERGY METER  v2.4  (Relay Protection Fix)");
   Serial.println("   Relay ON = Circuit ON | Relay OFF = Circuit OFF");
   Serial.println("==================================================");
 
+  // Pre-load output latch to RELAY_OFF (HIGH) BEFORE configuring as OUTPUT
+  // This guarantees active-LOW relay never glitches/energizes during power-up!
+  digitalWrite(PIN_RELAY_1, RELAY_OFF);
   pinMode(PIN_RELAY_1, OUTPUT);
-  pinMode(PIN_BUZZER, OUTPUT);
-  pinMode(PIN_STATUS_LED, OUTPUT);
+  relayIsOn = false;
 
-  setRelayState(false);
   digitalWrite(PIN_BUZZER, LOW);
+  pinMode(PIN_BUZZER, OUTPUT);
+
   digitalWrite(PIN_STATUS_LED, LOW);
-  Serial.println("[BOOT] Relay OFF / Circuit OFF safely during boot.");
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  Serial.printf("[BOOT] Relay GPIO%d pre-latched HIGH (Active-LOW OFF). Circuit safely isolated.\n", PIN_RELAY_1);
 
   PzemSerial.begin(9600, SERIAL_8N1, PIN_PZEM_RX, PIN_PZEM_TX);
   Serial.printf("[PZEM] Serial2 initialized: 9600 baud, RX=GPIO%d, TX=GPIO%d\n", PIN_PZEM_RX, PIN_PZEM_TX);
@@ -846,7 +865,8 @@ void loop() {
           protectionState = STATE_TRIP;
           activeFaultName = detectedFault;
           sendAlertToCloud(detectedFault, faultVal, faultMsg);
-          Serial.printf("[TRIP] %s! (%.1f) -> Relay OFF immediately.\n", detectedFault.c_str(), faultVal);
+          Serial.printf("[TRIP] %s! (%.1f) -> Setting GPIO%d HIGH (Relay OFF). Checking contactor CT feedback...\n",
+                        detectedFault.c_str(), faultVal, PIN_RELAY_1);
         } else {
           if (!relayIsOn && !manualOverride) setRelayState(true);
         }
@@ -876,8 +896,35 @@ void loop() {
           activeFaultName = "normal";
           if (!manualOverride) setRelayState(true);
           Serial.printf("[RECOVERED] V=%.1fV stable for 5s. Relay ON.\n", liveVoltage);
+          sendAlertToCloud("recovery", liveVoltage, "Mains voltage recovered to nominal range. Relay contactor re-engaged.");
         }
         break;
+    }
+  }
+
+  // -- TASK 1b: Continuous Hardware & Contactor Diagnostic (every 3s) --
+  if (now - lastDiagLog >= 3000) {
+    lastDiagLog = now;
+    bool ctCurrentFlowing = (pzemValid && liveCurrent > 0.05f);
+    bool contactorFault   = (!relayIsOn && ctCurrentFlowing);
+    int  pinLevel         = digitalRead(PIN_RELAY_1);
+
+    Serial.printf("[DIAG] V=%5.1fV | I=%5.3fA | P=%6.1fW | Fault: %-14s | State: %-8s | RelayCmd: %-3s | GPIO%d: %s(%s) | CT: %s\n",
+                  liveVoltage, liveCurrent, livePower,
+                  activeFaultName.c_str(),
+                  stName(protectionState),
+                  relayIsOn ? "ON" : "OFF",
+                  PIN_RELAY_1,
+                  pinLevel == HIGH ? "HIGH" : "LOW",
+                  pinLevel == HIGH ? "COIL_OFF" : "COIL_ON",
+                  contactorFault   ? "!FAIL:CURRENT FLOWING!" :
+                  (relayIsOn       ? (ctCurrentFlowing ? "LOAD_ACTIVE" : "STANDBY/ZERO") :
+                                     "VERIFIED_ISOLATED")
+    );
+
+    if (contactorFault) {
+      Serial.printf(">>> [CRITICAL] Contactor commanded OFF but CT measures %.3f A! Check NC vs NO terminal wiring!\n", liveCurrent);
+      if (buzzerBeepsLeft <= 0) triggerBuzzer(1);
     }
   }
 
@@ -899,9 +946,14 @@ void loop() {
 
       if (pzemValid) {
         sendReadingToCloud(isoTimeUtc);
-        Serial.printf("[DATA] %s | V=%.1f I=%.3f P=%.1f | Rly:%s Fault:%s St:%s | Supa:%s\n",
+        bool contactorFault = (!relayIsOn && liveCurrent > 0.05f);
+        Serial.printf("[DATA] %s | V=%.1f I=%.3f P=%.1f | Rly:%s(GPIO%d:%s) | CT:%s | Fault:%s St:%s | Supa:%s\n",
                       isoTimeUtc.c_str(), liveVoltage, liveCurrent, livePower,
-                      relayIsOn ? "ON" : "OFF", activeFaultName.c_str(), stName(protectionState),
+                      relayIsOn ? "ON" : "OFF",
+                      PIN_RELAY_1,
+                      digitalRead(PIN_RELAY_1) == HIGH ? "HIGH" : "LOW",
+                      contactorFault ? "FAIL_CURRENT_DETECTED" : (relayIsOn ? "CONDUCTING" : "ISOLATED"),
+                      activeFaultName.c_str(), stName(protectionState),
                       supabaseHealthy ? "OK" : (dnsResolved ? "HTTP_ERR" : "DNS_FAIL"));
       } else {
         Serial.printf("[DIAG] %s | PZEM:OFFLINE(fails:%d) | Rly:%s Fault:%s St:%s | OVP=%.0fV | Supa:%s\n",

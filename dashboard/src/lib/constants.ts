@@ -39,6 +39,8 @@ export const ALERT_TYPES: Record<string, { label: string; color: string }> = {
   over_power:     { label: 'Over Power',      color: 'var(--color-danger)'  },
   comm_failure:   { label: 'Comm Failure',    color: 'var(--color-warning)' },
   sensor_failure: { label: 'Sensor Failure',  color: 'var(--color-danger)'  },
+  device_offline: { label: 'Device Offline',  color: 'var(--color-danger)'  },
+  recovery:       { label: 'System Restored', color: 'var(--color-success)' },
 };
 
 // Chart buffer size (number of data points to keep in memory)

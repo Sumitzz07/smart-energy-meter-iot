@@ -375,10 +375,37 @@ export default function DevicePage() {
               </span>
             </div>
             <div style={{ fontSize: '1rem', fontWeight: 700, color: status?.relay1_status ? 'var(--color-success)' : 'var(--color-danger)' }}>
-              {status?.relay1_status ? 'CLOSED (ON)' : 'TRIPPED (OFF)'}
+              {status?.relay1_status ? 'COMMAND: CLOSED (ON)' : 'COMMAND: TRIPPED (OFF)'}
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '4px' }}>
               Automatic load protection interlock
+            </div>
+
+            {/* Live CT Contact Verification */}
+            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--color-border-subtle)', fontSize: '0.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--color-text-muted)' }}>Contact CT Feedback:</span>
+                {!status?.relay1_status ? (
+                  (latestReading?.current_amps ?? 0) > 0.05 ? (
+                    <span style={{ color: 'var(--color-danger)', fontWeight: 700 }}>
+                      ⚠️ FAIL: {(latestReading?.current_amps ?? 0).toFixed(3)} A
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>
+                      ✅ Isolated (0.000 A)
+                    </span>
+                  )
+                ) : (
+                  <span style={{ color: 'var(--color-info)', fontWeight: 600 }}>
+                    Conducting ({(latestReading?.current_amps ?? 0).toFixed(3)} A)
+                  </span>
+                )}
+              </div>
+              {!status?.relay1_status && (latestReading?.current_amps ?? 0) > 0.05 && (
+                <div style={{ color: 'var(--color-danger)', fontSize: '0.6875rem', marginTop: '4px', fontWeight: 600 }}>
+                  Contactor failed to open! Check for NC terminal wiring or stuck contacts.
+                </div>
+              )}
             </div>
           </div>
 

@@ -121,7 +121,9 @@ export default function DashboardPage() {
                       letterSpacing: '0.01em',
                     }}
                   >
-                    PROTECTION FAULT ACTIVE: {faultLabel}
+                    {isRelayOff && (latestReading?.current_amps ?? 0) > 0.05
+                      ? `CRITICAL: CONTACTOR FAILED TO OPEN (${(latestReading?.current_amps ?? 0).toFixed(2)} A DETECTED)`
+                      : `PROTECTION FAULT ACTIVE: ${faultLabel}`}
                   </h4>
                   <p
                     style={{
@@ -130,7 +132,19 @@ export default function DashboardPage() {
                       fontSize: '0.8125rem',
                     }}
                   >
-                    Threshold violation detected on <strong className="font-mono">{selectedDeviceId}</strong>. Relay contactor tripped to protect connected load.
+                    {isRelayOff && (latestReading?.current_amps ?? 0) > 0.05 ? (
+                      <span>
+                        Relay 1 was commanded <strong>OFF</strong> due to <strong>{faultLabel}</strong>, but CT sensor detects{' '}
+                        <strong className="font-mono" style={{ color: 'var(--color-danger)' }}>
+                          {(latestReading?.current_amps ?? 0).toFixed(3)} A
+                        </strong>{' '}
+                        still flowing through the load! Verify AC Live is wired to <strong>NO (Normally Open)</strong>, not <strong>NC</strong>, or inspect for welded contacts.
+                      </span>
+                    ) : (
+                      <span>
+                        Threshold violation detected on <strong className="font-mono">{selectedDeviceId}</strong>. Relay contactor tripped to protect connected load.
+                      </span>
+                    )}
                   </p>
                 </div>
               </div>
@@ -138,19 +152,40 @@ export default function DashboardPage() {
               <div
                 style={{
                   display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  backgroundColor: 'var(--color-danger)',
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  fontSize: '0.8125rem',
-                  letterSpacing: '0.02em',
+                  flexDirection: 'column',
+                  alignItems: 'flex-end',
+                  gap: '4px',
                 }}
               >
-                <Power size={16} />
-                <span>RELAY 1: OFF</span>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    backgroundColor: 'var(--color-danger)',
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    color: '#ffffff',
+                    fontWeight: 700,
+                    fontSize: '0.8125rem',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  <Power size={16} />
+                  <span>CMD: RELAY 1 OFF</span>
+                </div>
+                <span
+                  className="font-mono"
+                  style={{
+                    fontSize: '0.6875rem',
+                    fontWeight: 700,
+                    color: (latestReading?.current_amps ?? 0) > 0.05 ? '#fca5a5' : 'var(--color-success)',
+                  }}
+                >
+                  {(latestReading?.current_amps ?? 0) > 0.05
+                    ? `⚠️ CT: ${(latestReading?.current_amps ?? 0).toFixed(3)} A (STILL FLOWING)`
+                    : '✅ CT: 0.00 A (ISOLATED)'}
+                </span>
               </div>
             </div>
           )}
@@ -237,6 +272,7 @@ export default function DashboardPage() {
                 status={currentDeviceStatus}
                 isStale={isStale}
                 protectionStatus={latestReading?.protection_status}
+                currentAmps={latestReading?.current_amps}
               />
             </section>
 

@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/alerts/poll",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/devices/check-offline",
+      "schedule": "* * * * *"
+    }
+  ]
+}

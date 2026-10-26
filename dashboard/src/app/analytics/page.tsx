@@ -25,6 +25,10 @@ import {
   ShieldCheck,
   AlertCircle,
   BarChart3,
+  Download,
+  FileText,
+  Calendar,
+  CheckCircle2,
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useDevices } from '@/context/DeviceContext';
@@ -55,8 +59,80 @@ export default function AnalyticsPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [exportNotice, setExportNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Custom date range state
+  const [showCustomRange, setShowCustomRange] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
   const { settings } = useSettings(selectedDeviceId);
   const tariff = Number(settings?.cost_per_kwh) || 6.0;
+
+  // Handle CSV and PDF export downloads
+  const handleExport = async (format: 'csv' | 'pdf') => {
+    setExportNotice(null);
+    if (format === 'csv') setIsExportingCsv(true);
+    if (format === 'pdf') setIsExportingPdf(true);
+
+    try {
+      const isCustomActive = showCustomRange && customStartDate && customEndDate;
+      const params = new URLSearchParams({
+        format,
+        device_id: selectedDeviceId,
+        range: isCustomActive ? 'custom' : timeRange,
+      });
+
+      if (isCustomActive) {
+        params.append('start', new Date(customStartDate).toISOString());
+        params.append('end', new Date(customEndDate).toISOString());
+      }
+
+      const res = await fetch(`/api/telemetry/export?${params.toString()}`);
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to export ${format.toUpperCase()}`);
+      }
+
+      // Extract filename from response header or create fallback
+      const disposition = res.headers.get('content-disposition');
+      let filename = `energy_telemetry_${selectedDeviceId}_${timeRange}.${format}`;
+      if (disposition && disposition.includes('filename=')) {
+        const matches = disposition.match(/filename="?([^"]+)"?/);
+        if (matches && matches[1]) {
+          filename = matches[1];
+        }
+      }
+
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+
+      setExportNotice({
+        type: 'success',
+        message: `Successfully exported ${filename} (${(blob.size / 1024).toFixed(1)} KB)`,
+      });
+      setTimeout(() => setExportNotice(null), 6000);
+    } catch (err: any) {
+      console.error(`Export ${format} error:`, err);
+      setExportNotice({
+        type: 'error',
+        message: err.message || `An error occurred while generating ${format.toUpperCase()} export.`,
+      });
+    } finally {
+      if (format === 'csv') setIsExportingCsv(false);
+      if (format === 'pdf') setIsExportingPdf(false);
+    }
+  };
 
   // Fetch telemetry from Supabase energy_readings
   const fetchAnalyticsData = useCallback(async () => {
@@ -66,8 +142,12 @@ export default function AnalyticsPage() {
 
       const now = new Date();
       let startTime: Date | null = null;
+      let endTime: Date | null = null;
 
-      if (timeRange === '1h') {
+      if (showCustomRange && customStartDate && customEndDate) {
+        startTime = new Date(customStartDate);
+        endTime = new Date(customEndDate);
+      } else if (timeRange === '1h') {
         startTime = new Date(now.getTime() - 60 * 60 * 1000);
       } else if (timeRange === '24h') {
         startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -84,6 +164,9 @@ export default function AnalyticsPage() {
 
       if (startTime) {
         query = query.gte('timestamp', startTime.toISOString());
+      }
+      if (endTime) {
+        query = query.lte('timestamp', endTime.toISOString());
       }
 
       // Order ascending to build accurate chronological graphs
@@ -103,7 +186,7 @@ export default function AnalyticsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [timeRange, selectedDeviceId]);
+  }, [timeRange, selectedDeviceId, showCustomRange, customStartDate, customEndDate]);
 
   useEffect(() => {
     fetchAnalyticsData();
@@ -261,7 +344,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Action controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           {/* Time Range Pills */}
           <div
             style={{
@@ -276,14 +359,17 @@ export default function AnalyticsPage() {
             {(['1h', '24h', '7d', '30d', 'all'] as TimeRange[]).map((range) => (
               <button
                 key={range}
-                onClick={() => setTimeRange(range)}
+                onClick={() => {
+                  setTimeRange(range);
+                  setShowCustomRange(false);
+                }}
                 style={{
                   padding: '4px 10px',
                   borderRadius: 'var(--radius-sm)',
                   fontSize: '0.75rem',
-                  fontWeight: timeRange === range ? 700 : 500,
-                  backgroundColor: timeRange === range ? 'var(--color-accent)' : 'transparent',
-                  color: timeRange === range ? 'hsl(222, 24%, 8%)' : 'var(--color-text-secondary)',
+                  fontWeight: !showCustomRange && timeRange === range ? 700 : 500,
+                  backgroundColor: !showCustomRange && timeRange === range ? 'var(--color-accent)' : 'transparent',
+                  color: !showCustomRange && timeRange === range ? 'hsl(222, 24%, 8%)' : 'var(--color-text-secondary)',
                   cursor: 'pointer',
                   transition: 'all var(--transition-fast)',
                 }}
@@ -291,6 +377,27 @@ export default function AnalyticsPage() {
                 {range.toUpperCase()}
               </button>
             ))}
+
+            <button
+              onClick={() => setShowCustomRange(!showCustomRange)}
+              style={{
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.75rem',
+                fontWeight: showCustomRange ? 700 : 500,
+                backgroundColor: showCustomRange ? 'var(--color-accent)' : 'transparent',
+                color: showCustomRange ? 'hsl(222, 24%, 8%)' : 'var(--color-text-secondary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                transition: 'all var(--transition-fast)',
+              }}
+              title="Filter by custom start and end date"
+            >
+              <Calendar size={12} />
+              <span>CUSTOM</span>
+            </button>
           </div>
 
           <button
@@ -302,8 +409,144 @@ export default function AnalyticsPage() {
             <RefreshCw size={14} className={isLoading ? 'animate-pulse' : undefined} />
             <span>Refresh</span>
           </button>
+
+          {/* Export CSV Button */}
+          <button
+            onClick={() => handleExport('csv')}
+            className="btn btn-secondary"
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.8125rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            disabled={isExportingCsv || isExportingPdf || isLoading}
+            title="Download historical telemetry records as CSV"
+          >
+            <Download size={14} className={isExportingCsv ? 'animate-bounce' : undefined} />
+            <span>{isExportingCsv ? 'Exporting CSV...' : 'Export CSV'}</span>
+          </button>
+
+          {/* Export PDF Button */}
+          <button
+            onClick={() => handleExport('pdf')}
+            className="btn btn-secondary"
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.8125rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+            disabled={isExportingCsv || isExportingPdf || isLoading}
+            title="Generate and download multi-page telemetry PDF report"
+          >
+            <FileText size={14} className={isExportingPdf ? 'animate-bounce' : undefined} />
+            <span>{isExportingPdf ? 'Generating PDF...' : 'Export PDF'}</span>
+          </button>
         </div>
       </div>
+
+      {/* Custom Date Range Collapsible Bar */}
+      {showCustomRange && (
+        <div
+          style={{
+            backgroundColor: 'var(--color-bg-card)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>From:</span>
+            <input
+              type="datetime-local"
+              value={customStartDate}
+              onChange={(e) => setCustomStartDate(e.target.value)}
+              className="form-input"
+              style={{
+                backgroundColor: 'hsl(222, 22%, 11%)',
+                border: '1px solid var(--color-border)',
+                color: '#f8fafc',
+                fontSize: '0.75rem',
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>To:</span>
+            <input
+              type="datetime-local"
+              value={customEndDate}
+              onChange={(e) => setCustomEndDate(e.target.value)}
+              className="form-input"
+              style={{
+                backgroundColor: 'hsl(222, 22%, 11%)',
+                border: '1px solid var(--color-border)',
+                color: '#f8fafc',
+                fontSize: '0.75rem',
+                padding: '4px 8px',
+                borderRadius: 'var(--radius-sm)',
+              }}
+            />
+          </div>
+
+          <button
+            onClick={() => fetchAnalyticsData()}
+            className="btn btn-primary"
+            style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+            disabled={!customStartDate || !customEndDate || isLoading}
+          >
+            Apply Range
+          </button>
+
+          <button
+            onClick={() => {
+              setShowCustomRange(false);
+              setCustomStartDate('');
+              setCustomEndDate('');
+            }}
+            className="btn btn-secondary"
+            style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+          >
+            Reset
+          </button>
+        </div>
+      )}
+
+      {/* Export Feedback Notification */}
+      {exportNotice && (
+        <div
+          style={{
+            backgroundColor:
+              exportNotice.type === 'success'
+                ? 'rgba(16, 185, 129, 0.15)'
+                : 'var(--color-danger-bg)',
+            border: `1px solid ${
+              exportNotice.type === 'success'
+                ? 'rgba(16, 185, 129, 0.4)'
+                : 'var(--color-danger-border)'
+            }`,
+            color: exportNotice.type === 'success' ? '#34d399' : 'var(--color-danger)',
+            padding: '10px 14px',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            fontSize: '0.8125rem',
+          }}
+        >
+          {exportNotice.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+          <span>{exportNotice.message}</span>
+        </div>
+      )}
 
       {/* Error state */}
       {errorMsg && (

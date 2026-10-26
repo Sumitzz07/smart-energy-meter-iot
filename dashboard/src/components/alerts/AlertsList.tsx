@@ -184,19 +184,60 @@ export default function AlertsList({ alerts, onAcknowledge }: AlertsListProps) {
               </p>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                <span
-                  className="font-mono"
-                  style={{
-                    fontSize: '0.6875rem',
-                    fontWeight: 600,
-                    color: 'var(--color-text-secondary)',
-                    backgroundColor: 'var(--color-bg-primary)',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                  }}
-                >
-                  VAL: {Number(alert.value).toFixed(1)} | RELAY: {alert.relay_status?.toUpperCase()}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  <span
+                    className="font-mono"
+                    style={{
+                      fontSize: '0.6875rem',
+                      fontWeight: 600,
+                      color: 'var(--color-text-secondary)',
+                      backgroundColor: 'var(--color-bg-primary)',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    VAL: {Number(alert.value).toFixed(1)} | RELAY: {alert.relay_status?.toUpperCase()}
+                  </span>
+
+                  {alert.email_status && (
+                    <span
+                      title={alert.delivery_error ? `Email: ${alert.email_status} (${alert.delivery_error})` : `Email: ${alert.email_status}`}
+                      style={{
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        backgroundColor:
+                          alert.email_status === 'sent'
+                            ? 'var(--color-success-bg)'
+                            : alert.email_status === 'failed'
+                            ? 'var(--color-danger-bg)'
+                            : alert.email_status === 'skipped'
+                            ? 'var(--color-warning-bg)'
+                            : 'var(--color-bg-primary)',
+                        color:
+                          alert.email_status === 'sent'
+                            ? 'var(--color-success)'
+                            : alert.email_status === 'failed'
+                            ? 'var(--color-danger)'
+                            : alert.email_status === 'skipped'
+                            ? 'var(--color-warning)'
+                            : 'var(--color-text-muted)',
+                        border: `1px solid ${
+                          alert.email_status === 'sent'
+                            ? 'var(--color-success-border)'
+                            : alert.email_status === 'failed'
+                            ? 'var(--color-danger-border)'
+                            : alert.email_status === 'skipped'
+                            ? 'var(--color-warning-border)'
+                            : 'var(--color-border)'
+                        }`,
+                      }}
+                    >
+                      ✉️ {alert.email_status}
+                    </span>
+                  )}
+                </div>
 
                 {!alert.acknowledged && (
                   <button

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   AlertTriangle,
   AlertCircle,
@@ -15,6 +15,9 @@ import {
   Server,
   Activity,
   CheckCheck,
+  Send,
+  Mail,
+  RefreshCw,
 } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useDevices } from '@/context/DeviceContext';
@@ -24,16 +27,74 @@ import { ALERT_TYPES } from '@/lib/constants';
 import type { Alert } from '@/lib/types';
 
 type StatusFilter = 'all' | 'active' | 'acknowledged';
-type TypeFilter = 'all' | 'over_voltage' | 'under_voltage' | 'over_power' | 'comm_failure' | 'sensor_failure';
+type TypeFilter = 'all' | 'over_voltage' | 'under_voltage' | 'over_power' | 'comm_failure' | 'sensor_failure' | 'device_offline' | 'recovery';
 
 export default function AlertsPage() {
   const { selectedDeviceId } = useDevices();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isTesting, setIsTesting] = useState(false);
+  const [testCooldown, setTestCooldown] = useState(0);
+  const [testFeedback, setTestFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (testCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setTestCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [testCooldown]);
 
   const { alerts, unacknowledgedCount, acknowledgeAlert, acknowledgeAll, isLoading } = useAlerts(selectedDeviceId);
   const { settings } = useSettings(selectedDeviceId);
+
+  const handleRunTestAlert = async () => {
+    if (isTesting || testCooldown > 0) return;
+    setIsTesting(true);
+    setTestFeedback(null);
+    try {
+      const res = await fetch('/api/alerts/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device_id: selectedDeviceId === 'all' ? 'esp32-meter-001' : selectedDeviceId,
+          alert_type: 'over_voltage',
+          value: 254.2,
+          message: '[TEST] Simulated 254.2V overvoltage spike. Testing Gmail SMTP notification.',
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const emailSt = data.dispatch?.email?.status || 'unknown';
+        const err = data.dispatch?.errorSummary;
+        setTestCooldown(30); // 30s standard client backoff between tests
+        setTestFeedback({
+          type: 'success',
+          message: `Simulated alert generated! Email Delivery: ${emailSt.toUpperCase()}${err ? ` (${err})` : ''}`,
+        });
+      } else {
+        if (data.retryAfterSeconds) {
+          setTestCooldown(Math.min(data.retryAfterSeconds, 600));
+        }
+        setTestFeedback({
+          type: 'error',
+          message: data.error || 'Failed to dispatch test alert.',
+        });
+      }
+    } catch (err: any) {
+      setTestFeedback({
+        type: 'error',
+        message: err.message || 'Network error triggering test alert.',
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   // Helper to determine threshold based on alert type
   const getThresholdForAlert = (alertType: string): string => {
@@ -65,15 +126,18 @@ export default function AlertsPage() {
   };
 
   // Helper for Severity
-  const getSeverity = (alertType: string): { label: 'CRITICAL' | 'WARNING' | 'INFO'; color: string; bg: string; border: string } => {
+  const getSeverity = (alertType: string): { label: 'CRITICAL' | 'WARNING' | 'INFO' | 'RESOLVED'; color: string; bg: string; border: string } => {
     switch (alertType) {
       case 'over_voltage':
       case 'over_power':
       case 'sensor_failure':
+      case 'device_offline':
         return { label: 'CRITICAL', color: 'var(--color-danger)', bg: 'var(--color-danger-bg)', border: 'var(--color-danger-border)' };
       case 'under_voltage':
       case 'comm_failure':
         return { label: 'WARNING', color: 'var(--color-warning)', bg: 'var(--color-warning-bg)', border: 'var(--color-warning-border)' };
+      case 'recovery':
+        return { label: 'RESOLVED', color: 'var(--color-success)', bg: 'var(--color-success-bg)', border: 'var(--color-success-border)' };
       default:
         return { label: 'INFO', color: 'var(--color-info)', bg: 'var(--color-info-bg)', border: 'var(--color-info-border)' };
     }
@@ -90,6 +154,10 @@ export default function AlertsPage() {
         return <Activity size={18} color="var(--color-danger)" />;
       case 'comm_failure':
         return <Server size={18} color="var(--color-warning)" />;
+      case 'device_offline':
+        return <Power size={18} color="var(--color-danger)" />;
+      case 'recovery':
+        return <CheckCircle2 size={18} color="var(--color-success)" />;
       default:
         return <AlertCircle size={18} color="var(--color-info)" />;
     }
@@ -176,17 +244,80 @@ export default function AlertsPage() {
           </p>
         </div>
 
-        {unacknowledgedCount > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           <button
-            onClick={() => acknowledgeAll()}
-            className="btn btn-primary"
+            onClick={handleRunTestAlert}
+            disabled={isTesting || testCooldown > 0}
+            className="btn btn-secondary"
             style={{ fontSize: '0.8125rem' }}
+            title={
+              testCooldown > 0
+                ? `Please wait ${testCooldown}s before sending another test email.`
+                : 'Simulate an electrical fault to test Gmail SMTP email delivery safely without high voltage'
+            }
           >
-            <CheckCheck size={16} />
-            <span>Acknowledge All ({unacknowledgedCount})</span>
+            {isTesting ? (
+              <RefreshCw size={15} className="spin" />
+            ) : (
+              <Send size={15} />
+            )}
+            <span>
+              {isTesting
+                ? 'Sending Test...'
+                : testCooldown > 0
+                ? `Wait ${testCooldown}s`
+                : 'Test Email Alert'}
+            </span>
           </button>
-        )}
+
+          {unacknowledgedCount > 0 && (
+            <button
+              onClick={() => acknowledgeAll()}
+              className="btn btn-primary"
+              style={{ fontSize: '0.8125rem' }}
+            >
+              <CheckCheck size={16} />
+              <span>Acknowledge All ({unacknowledgedCount})</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Test Alert Feedback Banner */}
+      {testFeedback && (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: 'var(--radius-md)',
+            backgroundColor: testFeedback.type === 'success' ? 'var(--color-success-bg)' : 'var(--color-danger-bg)',
+            border: `1px solid ${testFeedback.type === 'success' ? 'var(--color-success-border)' : 'var(--color-danger-border)'}`,
+            color: testFeedback.type === 'success' ? 'var(--color-success)' : 'var(--color-danger)',
+            fontSize: '0.8125rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {testFeedback.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+            <span>{testFeedback.message}</span>
+          </div>
+          <button
+            onClick={() => setTestFeedback(null)}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              cursor: 'pointer',
+              fontWeight: 700,
+              fontSize: '0.75rem',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards Grid */}
       <div
@@ -367,6 +498,8 @@ export default function AlertsPage() {
               <option value="over_power" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>Over Power</option>
               <option value="comm_failure" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>Comm Failure</option>
               <option value="sensor_failure" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>Sensor Failure</option>
+              <option value="device_offline" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>Device Offline</option>
+              <option value="recovery" style={{ backgroundColor: 'var(--color-bg-secondary)' }}>System Restored</option>
             </select>
           </div>
         </div>
@@ -413,6 +546,7 @@ export default function AlertsPage() {
                   <th style={{ padding: '12px 16px' }}>Description / Root Cause</th>
                   <th style={{ padding: '12px 16px' }}>Relay Contactor</th>
                   <th style={{ padding: '12px 16px' }}>Timestamp</th>
+                  <th style={{ padding: '12px 16px' }}>Email Delivery</th>
                   <th style={{ padding: '12px 16px' }}>Status</th>
                   <th style={{ padding: '12px 16px', textAlign: 'right' }}>Action</th>
                 </tr>
@@ -487,6 +621,50 @@ export default function AlertsPage() {
                       {/* Timestamp */}
                       <td className="font-mono" style={{ padding: '12px 16px', color: 'var(--color-text-muted)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                         {formatTimestamp(alert.timestamp)}
+                      </td>
+
+                      {/* Email Delivery Status */}
+                      <td style={{ padding: '12px 16px' }}>
+                        <span
+                          title={alert.delivery_error ? `Email: ${alert.email_status || 'pending'} (${alert.delivery_error})` : `Email: ${alert.email_status || 'pending'}`}
+                          style={{
+                            fontSize: '0.75rem',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            backgroundColor:
+                              alert.email_status === 'sent'
+                                ? 'var(--color-success-bg)'
+                                : alert.email_status === 'failed'
+                                ? 'var(--color-danger-bg)'
+                                : alert.email_status === 'skipped'
+                                ? 'var(--color-warning-bg)'
+                                : 'var(--color-bg-secondary)',
+                            color:
+                              alert.email_status === 'sent'
+                                ? 'var(--color-success)'
+                                : alert.email_status === 'failed'
+                                ? 'var(--color-danger)'
+                                : alert.email_status === 'skipped'
+                                ? 'var(--color-warning)'
+                                : 'var(--color-text-muted)',
+                            border: `1px solid ${
+                              alert.email_status === 'sent'
+                                ? 'var(--color-success-border)'
+                                : alert.email_status === 'failed'
+                                ? 'var(--color-danger-border)'
+                                : alert.email_status === 'skipped'
+                                ? 'var(--color-warning-border)'
+                                : 'var(--color-border)'
+                            }`,
+                          }}
+                        >
+                          <Mail size={13} />
+                          {alert.email_status || 'pending'}
+                        </span>
                       </td>
 
                       {/* Status */}

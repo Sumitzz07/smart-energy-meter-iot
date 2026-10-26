@@ -44,11 +44,15 @@ export interface Alert {
   id: string;
   device_id: string;
   timestamp: string;
-  alert_type: 'over_voltage' | 'under_voltage' | 'over_power' | 'comm_failure' | 'sensor_failure';
+  alert_type: 'over_voltage' | 'under_voltage' | 'over_power' | 'comm_failure' | 'sensor_failure' | 'device_offline' | 'recovery';
   value: number;
   message: string;
   relay_status: 'on' | 'off';
   acknowledged: boolean;
+  email_status?: 'pending' | 'sent' | 'failed' | 'skipped';
+  sms_status?: 'pending' | 'sent' | 'failed' | 'skipped';
+  delivery_error?: string | null;
+  notification_sent_at?: string | null;
 }
 
 export interface DailyEnergySummary {
